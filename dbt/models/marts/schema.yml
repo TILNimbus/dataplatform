@@ -1,0 +1,36 @@
+version: 2
+
+models:
+  - name: stg_exchange_rate
+    description: >
+      Staging incrementale deduplicated da RAW.EXCHANGE_RATE.
+      Deduplicazione per DATA_ESATTA, mantiene LOADED_AT più recente.
+    columns:
+      - name: data_esatta
+        tests: [not_null, unique]
+      - name: base_currency
+        tests:
+          - not_null
+          - accepted_values: { values: ['EUR'] }
+      - name: exchange_rate
+        tests: [not_null]
+      - name: currency
+        tests:
+          - not_null
+          - accepted_values: { values: ['USD'] }
+
+  - name: exchange_rate
+    description: >
+      Tabella finale ANALYTICS.EXCHANGE_RATE.
+      Aggiornata via MERGE da DBT Native dopo ogni INSERT da N8N.
+    columns:
+      - name: data_esatta
+        tests: [not_null, unique]
+      - name: base_currency
+        tests: [not_null]
+      - name: exchange_rate
+        tests: [not_null]
+      - name: currency
+        tests: [not_null]
+      - name: updated_at
+        tests: [not_null]

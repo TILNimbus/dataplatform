@@ -1,0 +1,38 @@
+version: 2
+
+sources:
+  - name: raw
+    database: EXCHANGE_DB
+    schema: RAW
+    description: "Dati grezzi scritti da N8N prima delle trasformazioni DBT Native su Snowflake"
+
+    tables:
+      - name: exchange_rate
+        description: "Tabella append-only popolata da N8N con i tassi EUR/USD da exchangeratesapi.io"
+        columns:
+          - name: DATA_ESATTA
+            tests: [not_null]
+          - name: BASE_CURRENCY
+            tests:
+              - not_null
+              - accepted_values:
+                  values: ['EUR']
+          - name: EXCHANGE_RATE
+            tests: [not_null]
+          - name: CURRENCY
+            tests:
+              - not_null
+              - accepted_values:
+                  values: ['USD']
+          - name: LOADED_AT
+            tests: [not_null]
+
+      - name: calendario
+        description: "Tabella dimensionale calendario caricata da CSV"
+        columns:
+          - name: DATA_ESATTA
+            tests: [not_null, unique]
+          - name: FERIALE_FESTIVO
+            tests:
+              - accepted_values:
+                  values: ['Feriale', 'Festivo']

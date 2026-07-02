@@ -1,0 +1,30 @@
+# ================================================================
+# dbt_project.yml – Exchange Rate
+# ================================================================
+
+name:             'exchange_rate'
+version:          '1.0.0'
+config-version:   2
+
+profile: 'exchange_rate'
+
+model-paths:  ["models"]
+seed-paths:   ["seeds"]
+test-paths:   ["tests"]
+analysis-paths: ["analyses"]
+macro-paths:  ["macros"]
+snapshot-paths: ["snapshots"]
+
+target-path:  "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  exchange_rate:
+    staging:
+      +materialized: incremental
+      +schema: RAW          # → scrive in EXCHANGE_DB.RAW (override dello schema di output)
+      +tags: ['staging', 'exchange_rate']
+    marts:
+      +materialized: incremental
+      +schema: ANALYTICS    # → scrive in EXCHANGE_DB.ANALYTICS
+      +tags: ['marts', 'exchange_rate']
