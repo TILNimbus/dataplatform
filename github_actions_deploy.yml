@@ -1,0 +1,149 @@
+# ================================================================
+# GitHub Actions – CI/CD per DBT Native su Snowflake
+# File: .github/workflows/deploy_dbt.yml
+#
+# Trigger:
+#   - Push su main → deploy in produzione (ALTER DBT PROJECT ADD VERSION)
+#   - Pull Request  → run dbt in schema DEV per validazione
+#
+# Secrets richiesti nel repository GitHub:
+#   SNOWFLAKE_ACCOUNT   es. abc12345.eu-west-1
+#   SNOWFLAKE_USER      service account CI/CD
+#   SNOWFLAKE_PASSWORD  password service account
+#   SNOWFLAKE_ROLE      es. N8N_ROLE o SYSADMIN
+#   SNOWFLAKE_WAREHOUSE es. DBT_WH
+#   SNOWFLAKE_DATABASE  es. EXCHANGE_DB
+# ================================================================
+
+name: DBT Native – Deploy & Run on Snowflake
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'dbt/**'
+      - '.github/workflows/deploy_dbt.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'dbt/**'
+
+jobs:
+
+  # ──────────────────────────────────────────────────────────────
+  # JOB 1: Validazione su PR (schema DEV)
+  # ──────────────────────────────────────────────────────────────
+  ci-validate:
+    name: CI – Validate on DEV schema
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install Snowflake CLI
+        run: |
+          pip install snowflake-cli-labs
+          snow --version
+
+      - name: Configure Snowflake connection
+        env:
+          SNOWFLAKE_ACCOUNT:   ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER:      ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PASSWORD:  ${{ secrets.SNOWFLAKE_PASSWORD }}
+          SNOWFLAKE_ROLE:      ${{ secrets.SNOWFLAKE_ROLE }}
+          SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+          SNOWFLAKE_DATABASE:  ${{ secrets.SNOWFLAKE_DATABASE }}
+        run: |
+          mkdir -p ~/.snowflake
+          cat > ~/.snowflake/config.toml <<EOF
+          [connections.default]
+          account   = "$SNOWFLAKE_ACCOUNT"
+          user      = "$SNOWFLAKE_USER"
+          password  = "$SNOWFLAKE_PASSWORD"
+          role      = "$SNOWFLAKE_ROLE"
+          warehouse = "$SNOWFLAKE_WAREHOUSE"
+          database  = "$SNOWFLAKE_DATABASE"
+          EOF
+
+      - name: Deploy DBT PROJECT to DEV (PR branch)
+        run: |
+          # Aggiorna o crea il DBT PROJECT object puntando al branch della PR
+          snow sql -q "
+            ALTER GIT REPOSITORY EXCHANGE_DB.DBT_PROJECTS.EXCHANGE_RATE_REPO FETCH;
+            CREATE OR REPLACE DBT PROJECT EXCHANGE_DB.DBT_PROJECTS.EXCHANGE_RATE_DBT_DEV
+              FROM '@EXCHANGE_DB.DBT_PROJECTS.EXCHANGE_RATE_REPO/branches/${{ github.head_ref }}'
+              DEFAULT_TARGET = 'dev'
+              DBT_VERSION    = '1.9.4'
+              EXTERNAL_ACCESS_INTEGRATIONS = (DBT_EXTERNAL_ACCESS);
+          "
+
+      - name: Run DBT compile (syntax check)
+        run: |
+          snow sql -q "
+            EXECUTE DBT PROJECT EXCHANGE_DB.DBT_PROJECTS.EXCHANGE_RATE_DBT_DEV
+              ARGS = 'compile --select stg_exchange_rate exchange_rate --target dev';
+          "
+
+      - name: Run DBT tests on DEV
+        run: |
+          snow sql -q "
+            EXECUTE DBT PROJECT EXCHANGE_DB.DBT_PROJECTS.EXCHANGE_RATE_DBT_DEV
+              ARGS = 'test --select stg_exchange_rate exchange_rate --target dev';
+          "
+
+  # ──────────────────────────────────────────────────────────────
+  # JOB 2: Deploy in produzione (merge su main)
+  # ──────────────────────────────────────────────────────────────
+  cd-deploy-prod:
+    name: CD – Deploy to PROD
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install Snowflake CLI
+        run: pip install snowflake-cli-labs
+
+      - name: Configure Snowflake connection
+        env:
+          SNOWFLAKE_ACCOUNT:   ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER:      ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PASSWORD:  ${{ secrets.SNOWFLAKE_PASSWORD }}
+          SNOWFLAKE_ROLE:      ${{ secrets.SNOWFLAKE_ROLE }}
+          SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+          SNOWFLAKE_DATABASE:  ${{ secrets.SNOWFLAKE_DATABASE }}
+        run: |
+          mkdir -p ~/.snowflake
+          cat > ~/.snowflake/config.toml <<EOF
+          [connections.default]
+          account   = "$SNOWFLAKE_ACCOUNT"
+          user      = "$SNOWFLAKE_USER"
+          password  = "$SNOWFLAKE_PASSWORD"
+          role      = "$SNOWFLAKE_ROLE"
+          warehouse = "$SNOWFLAKE_WAREHOUSE"
+          database  = "$SNOWFLAKE_DATABASE"
+          EOF
+
+      - name: Fetch latest commit from GitHub
+        run: |
+          snow sql -q "
+            ALTER GIT REPOSITORY EXCHANGE_DB.DBT_PROJECTS.EXCHANGE_RATE_REPO FETCH;
+          "
+
+      - name: Add new version to DBT PROJECT (PROD)
+        # ALTER ADD VERSION = deployment incrementale senza reset della versione
+        run: |
+          snow sql -q "
+            ALTER DBT PROJECT EXCHANGE_DB.DBT_PROJECTS.EXCHANGE_RATE_DBT
+              ADD VERSION FROM '@EXCHANGE_DB.DBT_PROJECTS.EXCHANGE_RATE_REPO/branches/main';
+          "
+
+      - name: Verify deployment
+        run: |
+          snow sql -q "
+            DESCRIBE DBT PROJECT EXCHANGE_DB.DBT_PROJECTS.EXCHANGE_RATE_DBT;
+          "
