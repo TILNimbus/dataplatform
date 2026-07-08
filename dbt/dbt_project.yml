@@ -6,6 +6,8 @@ name:             'exchange_rate'
 version:          '1.0.0'
 config-version:   2
 
+profile: exchange_rate
+
 model-paths:  ["models"]
 # seed-paths:   ["seeds"]
 # test-paths:   ["tests"]
